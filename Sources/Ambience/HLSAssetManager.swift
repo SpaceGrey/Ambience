@@ -6,7 +6,7 @@ import os
 /// Manages downloading and caching of HLS assets.
 /// This class is a singleton that handles the entire lifecycle of HLS video assets,
 /// including downloading, storing with a predictable filename, and enforcing a cache limit.
-actor HLSAssetManager: NSObject {
+class HLSAssetManager: NSObject {
     static let shared = HLSAssetManager()
 
     var isDownloading = false
@@ -148,7 +148,7 @@ actor HLSAssetManager: NSObject {
 
 // MARK: - AVAssetDownloadDelegate
 extension HLSAssetManager: AVAssetDownloadDelegate {
-    func urlSession(_ session: URLSession, assetDownloadTask: AVAssetDownloadTask, didFinishDownloadingTo location: URL) async {
+    func urlSession(_ session: URLSession, assetDownloadTask: AVAssetDownloadTask, didFinishDownloadingTo location: URL) {
         guard let continuation = downloadContinuations.removeValue(forKey: assetDownloadTask) else { return }
         
         let hlsURL = assetDownloadTask.urlAsset.url
@@ -174,7 +174,7 @@ extension HLSAssetManager: AVAssetDownloadDelegate {
         }
     }
 
-    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) async {
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         guard let assetDownloadTask = task as? AVAssetDownloadTask,
               let continuation = downloadContinuations.removeValue(forKey: assetDownloadTask) else {
             return
