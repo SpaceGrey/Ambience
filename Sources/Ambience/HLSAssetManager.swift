@@ -1,6 +1,7 @@
 import Foundation
 import AVFoundation
 import os
+import AmbienceCore
 
 /// Manages downloading and caching of HLS assets.
 /// This class is a singleton that handles the entire lifecycle of HLS video assets,

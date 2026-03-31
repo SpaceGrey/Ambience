@@ -1,4 +1,7 @@
 import Foundation
+import os
+
+private let logger = Logger(subsystem: "com.shuhari.Ambience", category: "Exporter")
 
 /// Exports ambient video to MP4 by downloading raw HLS segments and concatenating.
 ///
@@ -71,7 +74,7 @@ public enum AmbienceExporter {
         public var displayName: String { tier.label }
         public var subtitle: String { tier.subtitle }
 
-        var pixelCount: Int {
+        public var pixelCount: Int {
             guard let resolution else { return 0 }
             let parts = resolution.split(separator: "x")
             guard parts.count == 2,
@@ -96,7 +99,6 @@ public enum AmbienceExporter {
 
         let sorted = all.sorted { $0.bandwidth < $1.bandwidth }
 
-        // Pick 4 representatives spread across the range
         var picked: [Variant] = []
         let tiers: [QualityTier] = [.low, .standard, .high, .original]
 
@@ -119,9 +121,8 @@ public enum AmbienceExporter {
         outputName: String = "ambience_export",
         onProgress: (@Sendable (Double) -> Void)? = nil
     ) async throws -> URL {
-        let prefix = "[Ambience Export]"
-        print("\(prefix) Exporting variant: \(variant.displayName)")
-        return try await downloadVariant(variant, outputName: outputName, onProgress: onProgress, prefix: prefix)
+        logger.info("Exporting variant: \(variant.displayName)")
+        return try await downloadVariant(variant, outputName: outputName, onProgress: onProgress)
     }
 
     /// Convenience: fetches the master m3u8, picks the highest-bandwidth variant, and exports.
@@ -130,51 +131,62 @@ public enum AmbienceExporter {
         outputName: String = "ambience_export",
         onProgress: (@Sendable (Double) -> Void)? = nil
     ) async throws -> URL {
-        let prefix = "[Ambience Export]"
-        print("\(prefix) Master m3u8: \(hlsURL.absoluteString)")
+        logger.info("Master m3u8: \(hlsURL.absoluteString)")
 
         let variants = try await availableVariants(hlsURL: hlsURL)
         guard let best = variants.first else { throw ExportError.noVariants }
-        print("\(prefix) Auto-selected: \(best.displayName)")
-        return try await downloadVariant(best, outputName: outputName, onProgress: onProgress, prefix: prefix)
+        logger.info("Auto-selected: \(best.displayName)")
+        return try await downloadVariant(best, outputName: outputName, onProgress: onProgress)
+    }
+
+    /// Exports a specific variant to a given output URL instead of a temp directory.
+    public static func export(
+        variant: Variant,
+        to outputURL: URL,
+        onProgress: (@Sendable (Double) -> Void)? = nil
+    ) async throws -> URL {
+        logger.info("Exporting variant: \(variant.displayName)")
+        return try await downloadVariant(variant, outputURL: outputURL, onProgress: onProgress)
     }
 
     // MARK: - Core Download
 
     private static func downloadVariant(
         _ variant: Variant,
-        outputName: String,
-        onProgress: (@Sendable (Double) -> Void)?,
-        prefix: String
+        outputName: String? = nil,
+        outputURL: URL? = nil,
+        onProgress: (@Sendable (Double) -> Void)?
     ) async throws -> URL {
 
         let subContent = try await fetchString(from: variant.url)
         let segments = parseSubPlaylist(subContent, baseURL: variant.url)
         let totalSegments = segments.mediaSegmentURLs.count + (segments.initSegmentURL != nil ? 1 : 0)
-        print("\(prefix) Init segment: \(segments.initSegmentURL != nil)  Media segments: \(segments.mediaSegmentURLs.count)")
+        logger.info("Init segment: \(segments.initSegmentURL != nil)  Media segments: \(segments.mediaSegmentURLs.count)")
         guard !segments.mediaSegmentURLs.isEmpty else { throw ExportError.noSegments }
 
-        // 4. Prepare output file
-        let outputURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(outputName)
-            .appendingPathExtension("mp4")
-        try? FileManager.default.removeItem(at: outputURL)
-        FileManager.default.createFile(atPath: outputURL.path, contents: nil)
-        let handle = try FileHandle(forWritingTo: outputURL)
+        let destination: URL
+        if let outputURL {
+            destination = outputURL
+        } else {
+            destination = FileManager.default.temporaryDirectory
+                .appendingPathComponent(outputName ?? "ambience_export")
+                .appendingPathExtension("mp4")
+        }
+        try? FileManager.default.removeItem(at: destination)
+        FileManager.default.createFile(atPath: destination.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: destination)
         defer { try? handle.close() }
 
         var downloaded = 0
 
-        // 5. Download init segment (ftyp + moov)
         if let initURL = segments.initSegmentURL {
             let data = try await downloadData(from: initURL)
             handle.write(data)
             downloaded += 1
             await reportProgress(downloaded, of: totalSegments, onProgress: onProgress)
-            print("\(prefix) Init segment: \(ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file))")
+            logger.info("Init segment: \(ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file))")
         }
 
-        // 6. Download media segments (moof + mdat)
         for segURL in segments.mediaSegmentURLs {
             let data = try await downloadData(from: segURL)
             handle.write(data)
@@ -182,15 +194,14 @@ public enum AmbienceExporter {
             await reportProgress(downloaded, of: totalSegments, onProgress: onProgress)
         }
 
-        let fileSize = (try? FileManager.default.attributesOfItem(atPath: outputURL.path)[.size] as? Int64) ?? 0
-        print("\(prefix) Done: \(outputURL.lastPathComponent) (\(ByteCountFormatter.string(fromByteCount: fileSize, countStyle: .file)))")
+        let fileSize = (try? FileManager.default.attributesOfItem(atPath: destination.path)[.size] as? Int64) ?? 0
+        logger.info("Done: \(destination.lastPathComponent) (\(ByteCountFormatter.string(fromByteCount: fileSize, countStyle: .file)))")
 
-        return outputURL
+        return destination
     }
 
     // MARK: - M3U8 Parsing
 
-    /// Parses a master playlist to extract variant streams.
     private static func parseMasterPlaylist(_ content: String, baseURL: URL) -> [Variant] {
         var variants: [Variant] = []
         let lines = content.components(separatedBy: .newlines)
@@ -230,7 +241,6 @@ public enum AmbienceExporter {
         return variants
     }
 
-    /// Keeps only the highest-bandwidth variant per unique resolution.
     private static func deduplicateByResolution(_ sortedVariants: [Variant]) -> [Variant] {
         var seen = Set<String>()
         return sortedVariants.filter { v in
@@ -241,7 +251,6 @@ public enum AmbienceExporter {
         }
     }
 
-    /// Parses a variant sub-playlist to extract init and media segment URLs.
     private static func parseSubPlaylist(_ content: String, baseURL: URL) -> SegmentList {
         var initURL: URL?
         var mediaURLs: [URL] = []
@@ -250,14 +259,12 @@ public enum AmbienceExporter {
         for (i, rawLine) in lines.enumerated() {
             let line = rawLine.trimmingCharacters(in: .whitespaces)
 
-            // #EXT-X-MAP:URI="init.mp4"
             if line.hasPrefix("#EXT-X-MAP:") {
                 if let uri = extractQuotedAttribute("URI", from: line) {
                     initURL = resolveURL(uri, against: baseURL)
                 }
             }
 
-            // #EXTINF: followed by segment URL
             if line.hasPrefix("#EXTINF:") {
                 var j = i + 1
                 while j < lines.count {
@@ -279,7 +286,6 @@ public enum AmbienceExporter {
     // MARK: - Helpers
 
     private static func extractAttribute(_ name: String, from attrs: String) -> String? {
-        // Handles: NAME=VALUE or NAME="VALUE"
         guard let range = attrs.range(of: "\(name)=") else { return nil }
         let rest = attrs[range.upperBound...]
         if rest.hasPrefix("\"") {

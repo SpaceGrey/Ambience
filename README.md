@@ -24,7 +24,65 @@ dependencies: [
 ]
 ```
 
-## Quick Usage
+## CLI Tool
+
+A command-line tool for downloading Apple Music ambient videos as MP4 files. No Xcode or Swift knowledge required.
+
+### Build
+
+```bash
+swift build -c release
+cp .build/release/ambience-cli /usr/local/bin/
+```
+
+### Usage
+
+**One-liner** — paste a link, get the best quality MP4 on your Desktop:
+
+```bash
+ambience-cli "https://music.apple.com/us/album/whatevers-clever/1845189970"
+# => ~/Desktop/whatevers_clever.mp4
+```
+
+**Interactive mode** — just run without arguments and follow the prompts:
+
+```bash
+ambience-cli
+```
+
+```
+  Ambience — Apple Music Ambient Video Exporter
+
+  Paste an Apple Music link: https://music.apple.com/...
+  ✓ Stream resolved.
+  ✓ Found 4 quality tier(s).
+
+  Available qualities:
+    [1] Original   2160x2160   20.5 Mbps (default)
+    [2] High       1080x1080   7.2 Mbps
+    [3] Standard   720x720     3.1 Mbps
+    [4] Low        360x360     255 kbps
+
+  Choose quality [1]:
+  Save to [~/Desktop/whatevers_clever.mp4]:
+
+  ✓ Saved: ~/Desktop/whatevers_clever.mp4 (737 MB)
+```
+
+**With options:**
+
+```bash
+# Specify quality and output path
+ambience-cli "https://music.apple.com/..." -q high -o ~/Movies/ambient.mp4
+
+# Quality choices: original (default), high, standard, low
+```
+
+> Storefront redirects are handled automatically — a US link works from any region.
+
+---
+
+## Swift Package Usage
 
 ### 1) Fetch an ambience asset
 

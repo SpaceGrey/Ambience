@@ -15,6 +15,7 @@
 import Foundation
 import Kanna
 import MusicKit
+@_exported import AmbienceCore
 
 /// Main class for handling Ambience-related operations
 public enum AmbienceService {
@@ -25,14 +26,8 @@ public enum AmbienceService {
     /// so set this to the quality floor you want. Defaults to 4 Mbps, which targets
     /// 1080×1080 on Apple's ambient video streams.
     public static var targetBitrate: Double = 4_000_000
-    /// Errors that can occur during ambience artwork download
-    public enum AmbienceError: Error {
-        case invalidURL
-        case invalidHTMLContent
-        case noAmbienceArtworkFound
-        case networkError
-        case redirectedToHomepage
-    }
+
+    public typealias AmbienceError = AmbienceCore.AmbienceError
     
     /// Policy for choosing which storefront to use when fetching ambience assets
     public enum StorefrontChoosePolicy {
@@ -215,82 +210,3 @@ private enum URLAdjuster {
     }
 }
 
-/// Struct responsible for fetching HTML content
-enum HTMLFetcher {
-    
-    private class RedirectDetector: NSObject, URLSessionTaskDelegate {
-        var hasRedirected = false
-        
-        func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
-            if response.statusCode == 302 {
-                hasRedirected = true
-                completionHandler(nil)
-            } else {
-                completionHandler(request)
-            }
-        }
-    }
-    
-    /// Fetches HTML content from a given URL
-    /// - Parameter url: The URL to fetch HTML content from
-    /// - Returns: The HTML content as a string
-    /// - Throws: An error if the network request fails or the response is invalid
-    static func fetchHTMLContent(from url: URL) async throws -> String {
-        let redirectDetector = RedirectDetector()
-        let session = URLSession(configuration: .default, delegate: redirectDetector, delegateQueue: nil)
-        defer { session.finishTasksAndInvalidate() }
-        
-        let (data, response) = try await session.data(from: url)
-        
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw AmbienceService.AmbienceError.networkError
-        }
-        
-        if redirectDetector.hasRedirected {
-            throw AmbienceService.AmbienceError.redirectedToHomepage
-        }
-        
-        guard (200 ... 299).contains(httpResponse.statusCode) else {
-            throw AmbienceService.AmbienceError.networkError
-        }
-        
-        guard let htmlString = String(data: data, encoding: .utf8), !htmlString.isEmpty else {
-            throw AmbienceService.AmbienceError.invalidHTMLContent
-        }
-        
-        return htmlString
-    }
-}
-
-/// Struct responsible for extracting ambience artwork URL from HTML content
-enum AmbienceArtworkExtractor {
-    /// Extracts the ambience artwork URL from the given HTML content
-    /// - Parameter htmlContent: The HTML content to extract the URL from
-    /// - Returns: The URL of the ambience artwork
-    /// - Throws: An error if the ambience artwork URL cannot be found or is invalid
-    static func extractAmbienceArtworkURL(from htmlContent: String) throws -> URL {
-        let keyword = "amp-ambient-video"
-        let ampAmbientVideoTagStart = "<" + keyword
-        let ampAmbientVideoTagEnd = "</" + keyword + ">"
-        
-        guard let startRange = htmlContent.range(of: ampAmbientVideoTagStart),
-              let endRange = htmlContent.range(of: ampAmbientVideoTagEnd)
-        else {
-            throw AmbienceService.AmbienceError.noAmbienceArtworkFound
-        }
-        
-        let content = htmlContent[startRange.lowerBound ..< endRange.upperBound]
-        let html = String(content)
-        
-        let doc = try HTML(html: html, encoding: .utf8)
-        
-        guard let source = doc.xpath("//" + keyword).first?["src"],
-              !source.isEmpty,
-              let url = URL(string: source)
-        else {
-            throw AmbienceService.AmbienceError.noAmbienceArtworkFound
-        }
-        
-        return url
-    }
-}
