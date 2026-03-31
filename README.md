@@ -69,7 +69,9 @@ print(outputURL)
 
 A redesigned demo app for browsing, previewing, and saving ambient artwork. Requires **iOS 26+**.
 
-![Ambience Companion](docs/images/companion-redesign.png)
+<p align="center">
+  <img src="docs/images/companion-redesign.png" width="400" height="400" alt="Ambience Companion" />
+</p>
 
 - MusicKit catalog search and personal recommendations.
 - Ambient video player with artwork reveal animation.
