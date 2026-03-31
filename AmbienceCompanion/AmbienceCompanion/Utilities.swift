@@ -1,6 +1,6 @@
 //
 //  Utilities.swift
-//  animated artworks
+//  AmbienceCompanion
 //
 //  Created by Shuhari on 2024/10/12.
 //
@@ -9,39 +9,32 @@ import Foundation
 import MusicKit
 
 class MusicService: ObservableObject {
-    @Published var isRetrievingRecommendations: Bool = false
+    @Published var isRetrievingRecommendations = false
     @Published var recommendation: [UserMusicItem] = []
-    
+
     init() {
         Task { @MainActor in
             if MusicAuthorization.currentStatus != .authorized {
                 let status = await MusicAuthorization.request()
                 guard status == .authorized else { return }
             }
-            
+
+            isRetrievingRecommendations = true
+            defer { isRetrievingRecommendations = false }
+
             do {
-                self.isRetrievingRecommendations = true
-                let recommendations = try await retrievePersonalRecommendations()
-                self.recommendation = recommendations
-                self.isRetrievingRecommendations = false
+                recommendation = try await fetchRecommendations()
             } catch {
-                print("Error retrieving recommendations: \(error)")
-                self.isRetrievingRecommendations = false
+                print("Failed to load recommendations: \(error)")
             }
         }
     }
-    
-    private func retrievePersonalRecommendations() async throws -> [UserMusicItem] {
-        let request = MusicPersonalRecommendationsRequest()
-        let collections = try await request.response().recommendations
-        
-        var items: [UserMusicItem] = []
-        
-        collections.forEach { recommendation in
-            items.append(contentsOf: recommendation.albums.map { $0.toUserMusicItem() })
-            items.append(contentsOf: recommendation.playlists.map { $0.toUserMusicItem() })
+
+    private func fetchRecommendations() async throws -> [UserMusicItem] {
+        let collections = try await MusicPersonalRecommendationsRequest().response().recommendations
+        return collections.flatMap { recommendation in
+            recommendation.albums.map { $0.toUserMusicItem() }
+                + recommendation.playlists.map { $0.toUserMusicItem() }
         }
-        
-        return items
     }
 }

@@ -10,13 +10,40 @@
 		01D35B912CBE49580078A273 /* Ambience in Frameworks */ = {isa = PBXBuildFile; productRef = 01D35B902CBE49580078A273 /* Ambience */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		01FEFDB82F7BA75B00615A09 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		01CEE7502CBA7C0C004E33A9 /* AmbienceCompanion.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AmbienceCompanion.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		01FEFDAB2F7BA75B00615A09 /* UniformTypeIdentifiers.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UniformTypeIdentifiers.framework; path = System/Library/Frameworks/UniformTypeIdentifiers.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		01FEFDFB2F7BAD0D00615A09 /* Exceptions for "AmbienceCompanion" folder in "AmbienceCompanion" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 01CEE74F2CBA7C0C004E33A9 /* AmbienceCompanion */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		01CEE7522CBA7C0C004E33A9 /* AmbienceCompanion */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				01FEFDFB2F7BAD0D00615A09 /* Exceptions for "AmbienceCompanion" folder in "AmbienceCompanion" target */,
+			);
 			path = AmbienceCompanion;
 			sourceTree = "<group>";
 		};
@@ -38,6 +65,7 @@
 			isa = PBXGroup;
 			children = (
 				01CEE7522CBA7C0C004E33A9 /* AmbienceCompanion */,
+				01FEFDAA2F7BA75B00615A09 /* Frameworks */,
 				01CEE7512CBA7C0C004E33A9 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -50,6 +78,14 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
+		01FEFDAA2F7BA75B00615A09 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				01FEFDAB2F7BA75B00615A09 /* UniformTypeIdentifiers.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -60,6 +96,7 @@
 				01CEE74C2CBA7C0C004E33A9 /* Sources */,
 				01CEE74D2CBA7C0C004E33A9 /* Frameworks */,
 				01CEE74E2CBA7C0C004E33A9 /* Resources */,
+				01FEFDB82F7BA75B00615A09 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
@@ -83,7 +120,7 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
-				LastSwiftUpdateCheck = 1600;
+				LastSwiftUpdateCheck = 2630;
 				LastUpgradeCheck = 1600;
 				TargetAttributes = {
 					01CEE74F2CBA7C0C004E33A9 = {
@@ -186,7 +223,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 16.6;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
@@ -243,7 +280,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 16.6;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
@@ -264,14 +301,16 @@
 				DEVELOPMENT_TEAM = GDH97LZ935;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = AmbienceCompanion/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				INFOPLIST_KEY_NSAppleMusicUsageDescription = "AmbienceCompanion requires access to your Apple Music library to fetch and display animated artwork, enhancing your music browsing and playback experience with visually engaging content.";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "AmbienceCompanion saves exported ambient videos to your Photo Library.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -301,14 +340,16 @@
 				DEVELOPMENT_TEAM = GDH97LZ935;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = AmbienceCompanion/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
 				INFOPLIST_KEY_NSAppleMusicUsageDescription = "AmbienceCompanion requires access to your Apple Music library to fetch and display animated artwork, enhancing your music browsing and playback experience with visually engaging content.";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "AmbienceCompanion saves exported ambient videos to your Photo Library.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",

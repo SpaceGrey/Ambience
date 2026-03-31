@@ -20,8 +20,11 @@ import MusicKit
 public enum AmbienceService {
     /// set the cache limit of ambience assets
     public static var cacheLimit = 100
-    /// set the target bitrate for ambience assets
-    public static var targetBitrate:Double = 300_000
+    /// Minimum acceptable average bitrate (bps) when selecting an HLS variant.
+    /// The downloader picks the lowest-bitrate stream that still meets this threshold,
+    /// so set this to the quality floor you want. Defaults to 4 Mbps, which targets
+    /// 1080×1080 on Apple's ambient video streams.
+    public static var targetBitrate: Double = 4_000_000
     /// Errors that can occur during ambience artwork download
     public enum AmbienceError: Error {
         case invalidURL
@@ -80,6 +83,46 @@ public enum AmbienceService {
     ///   // Only use region storefront
     ///   let regionOnlyURL = try await AmbienceService.fetchAmbienceAsset(from: musicItemURL, storefrontPolicy: .followRegion)
     ///   ```
+    /// Resolves a music item URL to the raw HLS stream URL (m3u8), without downloading.
+    ///
+    /// Use this when you need the remote stream URL directly (e.g. for export via
+    /// `AVAssetExportSession`), rather than the locally cached `.movpkg`.
+    public static func resolveHLSURL(
+        from musicItemSourceURL: URL,
+        storefrontPolicy: StorefrontChoosePolicy = .tryBoth
+    ) async throws -> URL {
+        let adjustedURL = try await URLAdjuster.adjustURLForRegion(musicItemSourceURL)
+
+        let fetchHLS: (URL) async throws -> URL = { pageURL in
+            let html = try await HTMLFetcher.fetchHTMLContent(from: pageURL)
+            return try AmbienceArtworkExtractor.extractAmbienceArtworkURL(from: html)
+        }
+
+        switch storefrontPolicy {
+        case .followAccount:
+            return try await fetchHLS(musicItemSourceURL)
+        case .followRegion:
+            return try await fetchHLS(adjustedURL)
+        case .tryBoth:
+            if regionFirst {
+                do { return try await fetchHLS(adjustedURL) }
+                catch AmbienceError.redirectedToHomepage {
+                    let res = try await fetchHLS(musicItemSourceURL)
+                    regionFirst = false
+                    return res
+                }
+            } else {
+                do { return try await fetchHLS(musicItemSourceURL) }
+                catch AmbienceError.redirectedToHomepage {
+                    let res = try await fetchHLS(adjustedURL)
+                    regionFirst = true
+                    return res
+                }
+            }
+        }
+    }
+
+    /// Fetches the ambience asset configuration file URL for a given music item source URL
     public static func fetchAmbienceAsset(
         from musicItemSourceURL: URL,
         storefrontPolicy: StorefrontChoosePolicy = .tryBoth
@@ -195,6 +238,7 @@ enum HTMLFetcher {
     static func fetchHTMLContent(from url: URL) async throws -> String {
         let redirectDetector = RedirectDetector()
         let session = URLSession(configuration: .default, delegate: redirectDetector, delegateQueue: nil)
+        defer { session.finishTasksAndInvalidate() }
         
         let (data, response) = try await session.data(from: url)
         

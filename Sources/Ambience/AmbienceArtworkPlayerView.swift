@@ -63,6 +63,7 @@ public class AmbienceArtworkPlayerView: UIView {
     private var timeObserver: Any?
     private var itemObservation: NSKeyValueObservation?
     private var wasPlayingBeforeResigningActive = false
+    private(set) var currentURL: URL?
 
     // MARK: - Initialization
 
@@ -88,6 +89,8 @@ public class AmbienceArtworkPlayerView: UIView {
     // MARK: - Public Methods
 
     public func updatePlayerItem(with url: URL, shouldAutoPlay: Bool = true) {
+        guard url != currentURL else { return }
+        self.currentURL = url
         self.shouldAutoPlay = shouldAutoPlay
         let playerItem = AVPlayerItem(url: url)
 
@@ -232,6 +235,7 @@ public class AmbienceArtworkPlayerView: NSView {
     private var timeObserver: Any?
     private var itemObservation: NSKeyValueObservation?
     private var wasPlayingBeforeResigningActive = false
+    private(set) var currentURL: URL?
 
     // MARK: - Initialization
 
@@ -255,6 +259,8 @@ public class AmbienceArtworkPlayerView: NSView {
     // MARK: - Public Methods
 
     public func updatePlayerItem(with url: URL, shouldAutoPlay: Bool = true) {
+        guard url != currentURL else { return }
+        self.currentURL = url
         self.shouldAutoPlay = shouldAutoPlay
         let playerItem = AVPlayerItem(url: url)
 
@@ -286,10 +292,10 @@ public class AmbienceArtworkPlayerView: NSView {
     // MARK: - Private Methods
 
     private func setupPlayer() {
+        wantsLayer = true
         playerLayer = AVPlayerLayer()
         playerLayer.player = player
         layer = playerLayer
-        wantsLayer = true
         updateVideoGravity()
     }
 
