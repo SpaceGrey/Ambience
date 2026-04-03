@@ -34,5 +34,5 @@ Carthage/Build
 
 # SPM
 .swiftpm
-.build/ambience-cli
+.build/
 ambience-cli-macos-universal.tar.gz

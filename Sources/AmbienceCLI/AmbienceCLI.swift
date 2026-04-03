@@ -86,7 +86,7 @@ private func directExport(urlString: String, quality: String?, output: String?) 
         hlsURL = try await resolveToHLS(urlString)
         spinner.stop(finalMessage: "Stream resolved.")
     } catch {
-        spinner.stop(symbol: "✗", finalMessage: "Failed: \(error.localizedDescription)")
+        spinner.stop(symbol: "✗", finalMessage: "Failed: \(userFacingErrorMessage(error))")
         throw ExitCode.failure
     }
 
@@ -156,7 +156,7 @@ private func interactiveMode() async throws {
         hlsURL = try await resolveToHLS(input)
         spinner.stop(finalMessage: "Stream resolved.")
     } catch {
-        spinner.stop(symbol: "✗", finalMessage: "Failed: \(error.localizedDescription)")
+        spinner.stop(symbol: "✗", finalMessage: "Failed: \(userFacingErrorMessage(error))")
         throw ExitCode.failure
     }
 
@@ -402,4 +402,15 @@ private func formatBandwidth(_ bps: Double) -> String {
         return String(format: "%.0f kbps", bps / 1_000)
     }
     return String(format: "%.0f bps", bps)
+}
+
+private func userFacingErrorMessage(_ error: Error) -> String {
+    if let localized = error as? LocalizedError {
+        let description = localized.errorDescription ?? error.localizedDescription
+        if let recovery = localized.recoverySuggestion, !recovery.isEmpty {
+            return "\(description) \(recovery)"
+        }
+        return description
+    }
+    return error.localizedDescription
 }
