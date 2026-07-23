@@ -1,6 +1,5 @@
 import Foundation
 import AVFoundation
-import os
 import AmbienceCore
 
 /// Manages downloading and caching of HLS assets.
@@ -15,13 +14,10 @@ actor HLSAssetManager: NSObject {
     // MARK: - Private Properties
     private var downloadSession: AVAssetDownloadURLSession!
     private let cacheLimit = AmbienceService.cacheLimit
-    private let targetBitrate:Double = AmbienceService.targetBitrate
+    private let targetBitrate: Double = AmbienceService.targetBitrate
     private let cacheDirectory: URL
     private let metadataURL: URL
     private var assetMetadata: [String: AssetMetadata] = [:]
-    
-    // Modern logging
-    private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "HLSAssetManager")
 
     // To prevent re-downloading the same asset concurrently
     private var activeDownloadTasks: [URL: Task<URL, Error>] = [:]
@@ -55,6 +51,16 @@ actor HLSAssetManager: NSObject {
         self.downloadSession = AVAssetDownloadURLSession(configuration: configuration,
                                                        assetDownloadDelegate: self,
                                                        delegateQueue: OperationQueue.main)
+
+        AmbienceLog.info(
+            "HLSAssetManager initialized",
+            metadata: [
+                "cache_directory": self.cacheDirectory.path,
+                "cached_assets": String(self.assetMetadata.count),
+                "cache_limit": String(self.cacheLimit),
+                "target_bitrate": String(format: "%.0f", self.targetBitrate),
+            ]
+        )
     }
 
     /// Returns the local URL for a given remote URL if it's already cached.
@@ -65,6 +71,14 @@ actor HLSAssetManager: NSObject {
             if FileManager.default.fileExists(atPath: localURL.path) {
                 return localURL
             }
+            AmbienceLog.warning(
+                "Cache metadata points to missing file; treating as miss",
+                metadata: [
+                    "source_url": remoteURL.absoluteString,
+                    "filename": filename,
+                    "expected_path": localURL.path,
+                ]
+            )
         }
         return nil
     }
@@ -72,45 +86,116 @@ actor HLSAssetManager: NSObject {
     /// Downloads an HLS asset from a remote URL and stores it in the cache.
     /// If the asset is already being downloaded, it awaits the result of the existing download.
     func getAsset(from remoteURL: URL) async throws -> URL {
+        AmbienceLog.debug(
+            "getAsset started",
+            metadata: ["source_url": remoteURL.absoluteString]
+        )
+
         // If already cached, return the local URL immediately.
         if let localURL = localAssetURL(for: remoteURL) {
-            Self.logger.info("Cache hit for URL: \(remoteURL.absoluteString)")
+            AmbienceLog.info(
+                "HLS cache hit",
+                metadata: [
+                    "source_url": remoteURL.absoluteString,
+                    "local_path": localURL.path,
+                ]
+            )
             return localURL
         }
         
-        let htmlContent = try await HTMLFetcher.fetchHTMLContent(from: remoteURL)
-        let hlsURL = try AmbienceArtworkExtractor.extractAmbienceArtworkURL(from: htmlContent)
+        AmbienceLog.debug(
+            "HLS cache miss; fetching page HTML for m3u8 extraction",
+            metadata: ["source_url": remoteURL.absoluteString]
+        )
 
-        print("[Ambience HLS] Extracted m3u8 URL: \(hlsURL.absoluteString)")
+        let htmlContent: String
+        do {
+            htmlContent = try await HTMLFetcher.fetchHTMLContent(from: remoteURL)
+        } catch {
+            AmbienceLog.error(
+                "Failed to fetch page HTML for asset",
+                metadata: [
+                    "source_url": remoteURL.absoluteString,
+                    "error": String(describing: error),
+                ]
+            )
+            throw error
+        }
+
+        let hlsURL: URL
+        do {
+            hlsURL = try AmbienceArtworkExtractor.extractAmbienceArtworkURL(from: htmlContent)
+        } catch {
+            AmbienceLog.error(
+                "Failed to extract HLS URL from page",
+                metadata: [
+                    "source_url": remoteURL.absoluteString,
+                    "error": String(describing: error),
+                ]
+            )
+            throw error
+        }
+
+        AmbienceLog.info(
+            "Extracted m3u8 URL",
+            metadata: [
+                "source_url": remoteURL.absoluteString,
+                "hls_url": hlsURL.absoluteString,
+            ]
+        )
+
         if let manifest = try? String(contentsOf: hlsURL, encoding: .utf8) {
-            print("[Ambience HLS] ── m3u8 manifest ──────────────────────")
-            manifest.components(separatedBy: "\n").forEach { print("[Ambience HLS] \($0)") }
-            print("[Ambience HLS] ────────────────────────────────────────")
+            let lineCount = manifest.components(separatedBy: .newlines).filter { !$0.isEmpty }.count
+            AmbienceLog.debug(
+                "Loaded m3u8 manifest",
+                metadata: [
+                    "hls_url": hlsURL.absoluteString,
+                    "manifest_bytes": String(manifest.utf8.count),
+                    "manifest_lines": String(lineCount),
+                    "manifest_preview": String(manifest.prefix(400))
+                        .replacingOccurrences(of: "\n", with: "\\n"),
+                ]
+            )
+        } else {
+            AmbienceLog.warning(
+                "Unable to read m3u8 manifest text before download",
+                metadata: ["hls_url": hlsURL.absoluteString]
+            )
         }
 
         // If a download for this URL is already in progress, await its result.
         if let existingTask = activeDownloadTasks[hlsURL] {
-            Self.logger.info("Download already in progress for URL: \(remoteURL.absoluteString). Awaiting result.")
+            AmbienceLog.info(
+                "HLS download already in progress; awaiting existing task",
+                metadata: [
+                    "source_url": remoteURL.absoluteString,
+                    "hls_url": hlsURL.absoluteString,
+                ]
+            )
             return try await existingTask.value
         }
 
         let downloadTask = Task {
             defer {
                 // Clean up after the task is complete
-                    self.activeDownloadTasks.removeValue(forKey: hlsURL)
-                    self.sourceLookUpTable.removeValue(forKey: hlsURL)
-                    self.isDownloading = false
-                
+                self.activeDownloadTasks.removeValue(forKey: hlsURL)
+                self.sourceLookUpTable.removeValue(forKey: hlsURL)
+                self.isDownloading = false
             }
-            Self.logger.info("Cache miss for URL: \(hlsURL.absoluteString). Starting new download.")
+            AmbienceLog.info(
+                "Starting HLS download",
+                metadata: [
+                    "source_url": remoteURL.absoluteString,
+                    "hls_url": hlsURL.absoluteString,
+                ]
+            )
             return try await performDownload(from: hlsURL)
         }
 
         // Store the new task
-            self.isDownloading = true
-            self.activeDownloadTasks[hlsURL] = downloadTask
-            self.sourceLookUpTable[hlsURL] = remoteURL
-        
+        self.isDownloading = true
+        self.activeDownloadTasks[hlsURL] = downloadTask
+        self.sourceLookUpTable[hlsURL] = remoteURL
 
         return try await downloadTask.value
     }
@@ -125,26 +210,51 @@ actor HLSAssetManager: NSObject {
                 do {
                     variants = try await asset.load(.variants)
                 } catch {
+                    AmbienceLog.error(
+                        "Failed to load HLS variants",
+                        metadata: [
+                            "hls_url": remoteURL.absoluteString,
+                            "error": error.localizedDescription,
+                        ]
+                    )
                     continuation.resume(throwing: NSError(domain: "HLSAssetManager", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to load variants: \(error.localizedDescription)"]))
                     return
                 }
                 
                 guard !variants.isEmpty else {
+                    AmbienceLog.error(
+                        "No HLS video variants found",
+                        metadata: ["hls_url": remoteURL.absoluteString]
+                    )
                     continuation.resume(throwing: NSError(domain: "HLSAssetManager", code: -1, userInfo: [NSLocalizedDescriptionKey: "No video variants found."]))
                     return
                 }
 
-                print("[Ambience HLS] Found \(variants.count) variant(s), targetBitrate=\(self.targetBitrate)")
+                AmbienceLog.debug(
+                    "HLS variants loaded",
+                    metadata: [
+                        "hls_url": remoteURL.absoluteString,
+                        "variant_count": String(variants.count),
+                        "target_bitrate": String(format: "%.0f", self.targetBitrate),
+                    ]
+                )
                 for (i, v) in variants.enumerated() {
-                    let bitrate = v.averageBitRate.map { String(format: "%.0f bps", $0) } ?? "unknown"
+                    let bitrate = v.averageBitRate.map { String(format: "%.0f", $0) } ?? "unknown"
                     let size: String
                     if let w = v.videoAttributes?.presentationSize.width,
                        let h = v.videoAttributes?.presentationSize.height {
-                        size = "\(Int(w))×\(Int(h))"
+                        size = "\(Int(w))x\(Int(h))"
                     } else {
                         size = "unknown"
                     }
-                    print("[Ambience HLS]   [\(i)] \(bitrate)  \(size)")
+                    AmbienceLog.debug(
+                        "HLS variant",
+                        metadata: [
+                            "index": String(i),
+                            "bitrate_bps": bitrate,
+                            "resolution": size,
+                        ]
+                    )
                 }
 
                 let sortedAscending = variants.sorted { ($0.averageBitRate ?? 0) < ($1.averageBitRate ?? 0) }
@@ -158,11 +268,18 @@ actor HLSAssetManager: NSObject {
                     let res: String
                     if let w = best.videoAttributes?.presentationSize.width,
                        let h = best.videoAttributes?.presentationSize.height {
-                        res = "\(Int(w))×\(Int(h))"
+                        res = "\(Int(w))x\(Int(h))"
                     } else {
                         res = "unknown"
                     }
-                    print("[Ambience HLS] Selected variant: \(String(format: "%.0f", best.averageBitRate ?? 0)) bps  \(res)")
+                    AmbienceLog.info(
+                        "Selected HLS variant",
+                        metadata: [
+                            "hls_url": remoteURL.absoluteString,
+                            "bitrate_bps": String(format: "%.0f", best.averageBitRate ?? 0),
+                            "resolution": res,
+                        ]
+                    )
                 }
 
                 var options: [String: Any]? = nil
@@ -174,10 +291,18 @@ actor HLSAssetManager: NSObject {
                                                                             assetTitle: remoteURL.lastPathComponent,
                                                                             assetArtworkData: nil,
                                                                             options: options) else {
+                    AmbienceLog.error(
+                        "Failed to create AVAssetDownloadTask",
+                        metadata: ["hls_url": remoteURL.absoluteString]
+                    )
                     continuation.resume(throwing: NSError(domain: "HLSAssetManager", code: -2, userInfo: [NSLocalizedDescriptionKey: "Failed to create download task."]))
                     return
                 }
                 
+                AmbienceLog.debug(
+                    "AVAssetDownloadTask resumed",
+                    metadata: ["hls_url": remoteURL.absoluteString]
+                )
                 self.downloadContinuations[task] = continuation
                 task.resume()
             }
@@ -197,10 +322,23 @@ extension HLSAssetManager: AVAssetDownloadDelegate {
     }
 
     private func handleDidFinishDownloading(assetDownloadTask: AVAssetDownloadTask, location: URL) {
-        guard let continuation = downloadContinuations.removeValue(forKey: assetDownloadTask) else { return }
+        guard let continuation = downloadContinuations.removeValue(forKey: assetDownloadTask) else {
+            AmbienceLog.warning(
+                "Download finished but no continuation found",
+                metadata: [
+                    "hls_url": assetDownloadTask.urlAsset.url.absoluteString,
+                    "temp_location": location.path,
+                ]
+            )
+            return
+        }
 
         let hlsURL = assetDownloadTask.urlAsset.url
         guard let sourceURL = sourceLookUpTable[hlsURL] else {
+            AmbienceLog.error(
+                "Source URL missing from lookup table after download",
+                metadata: ["hls_url": hlsURL.absoluteString]
+            )
             continuation.resume(throwing: NSError(domain: "HLSAssetManager", code: -3, userInfo: [NSLocalizedDescriptionKey: "Source URL not found in lookup table for \(hlsURL.absoluteString)"]))
             return
         }
@@ -211,14 +349,30 @@ extension HLSAssetManager: AVAssetDownloadDelegate {
             try? FileManager.default.removeItem(at: destinationURL)
             try FileManager.default.moveItem(at: location, to: destinationURL)
 
-            Self.logger.info("Successfully downloaded and cached asset from \(hlsURL.absoluteString) to \(destinationURL.path)")
+            AmbienceLog.info(
+                "HLS asset downloaded and cached",
+                metadata: [
+                    "source_url": sourceURL.absoluteString,
+                    "hls_url": hlsURL.absoluteString,
+                    "local_path": destinationURL.path,
+                    "filename": filename,
+                ]
+            )
 
             let metadata = AssetMetadata(localFilename: filename, creationDate: Date())
             addAssetToMetadata(metadata)
 
             continuation.resume(returning: destinationURL)
         } catch {
-            Self.logger.error("Failed to move downloaded asset for \(hlsURL.absoluteString). Error: \(error.localizedDescription)")
+            AmbienceLog.error(
+                "Failed to move downloaded HLS asset into cache",
+                metadata: [
+                    "hls_url": hlsURL.absoluteString,
+                    "temp_location": location.path,
+                    "destination": destinationURL.path,
+                    "error": error.localizedDescription,
+                ]
+            )
             continuation.resume(throwing: error)
         }
     }
@@ -227,7 +381,14 @@ extension HLSAssetManager: AVAssetDownloadDelegate {
         guard let continuation = downloadContinuations.removeValue(forKey: assetDownloadTask) else { return }
 
         if let error = error {
-            Self.logger.error("Download failed for task \(assetDownloadTask.urlAsset.url.absoluteString) with error: \(error.localizedDescription)")
+            AmbienceLog.error(
+                "HLS download failed",
+                metadata: [
+                    "hls_url": assetDownloadTask.urlAsset.url.absoluteString,
+                    "error": error.localizedDescription,
+                    "error_debug": String(describing: error),
+                ]
+            )
             continuation.resume(throwing: error)
         }
     }
@@ -249,7 +410,10 @@ private extension HLSAssetManager {
             //https://music.apple.com/cn/album/lover/1468058165?l=en-GB
             let path = urlString[match]
             if let id = path.split(separator: "/").last {
-                Self.logger.info("Convert the id to album \(id)")
+                AmbienceLog.debug(
+                    "Cache key from album id",
+                    metadata: ["album_id": String(id), "source_url": urlString]
+                )
                 name = String(id)
                 return name+".movpkg"
             }
@@ -258,7 +422,10 @@ private extension HLSAssetManager {
             //https://music.apple.com/cn/playlist/12-星座歌单-巨蟹月/pl.00ead18e05ad4267b7a7f167923dc79f
             let path = urlString[match]
             if let id = path.split(separator: ".").last {
-                Self.logger.info("Convert the id to playlist \(id)")
+                AmbienceLog.debug(
+                    "Cache key from playlist id",
+                    metadata: ["playlist_id": String(id), "source_url": urlString]
+                )
                 name = String(id)
                 return name+".movpkg"
             }
@@ -269,8 +436,16 @@ private extension HLSAssetManager {
             let trimmed = urlString
                 .replacingOccurrences(of: "https://music.apple.com", with: "")
                 .replacingOccurrences(of: "/", with: "")
+            AmbienceLog.debug(
+                "Cache key fallback for Apple Music URL",
+                metadata: ["filename": trimmed + ".movpkg"]
+            )
             return trimmed+".movpkg"
         }
+        AmbienceLog.debug(
+            "Cache key raw fallback",
+            metadata: ["filename": name + ".movpkg"]
+        )
         return name+".movpkg"
     }
 
@@ -278,12 +453,15 @@ private extension HLSAssetManager {
         guard FileManager.default.fileExists(atPath: metadataURL.path),
               let data = try? Data(contentsOf: metadataURL),
               let decodedMetadata = try? JSONDecoder().decode([String: AssetMetadata].self, from: data) else {
-            Self.logger.info("No existing metadata found. Starting fresh.")
+            AmbienceLog.debug("No existing HLS metadata; starting fresh")
             self.assetMetadata = [:]
             return
         }
         self.assetMetadata = decodedMetadata
-        Self.logger.info("Successfully loaded HLS asset metadata for \(self.assetMetadata.count) items.")
+        AmbienceLog.info(
+            "Loaded HLS asset metadata",
+            metadata: ["count": String(self.assetMetadata.count)]
+        )
     }
 
     func saveMetadata() {
@@ -291,7 +469,10 @@ private extension HLSAssetManager {
             let data = try JSONEncoder().encode(assetMetadata)
             try data.write(to: metadataURL, options: .atomic)
         } catch {
-            Self.logger.error("Failed to save HLS asset metadata: \(error.localizedDescription)")
+            AmbienceLog.error(
+                "Failed to save HLS asset metadata",
+                metadata: ["error": error.localizedDescription]
+            )
         }
     }
 
@@ -315,7 +496,10 @@ private extension HLSAssetManager {
             let localURL = cacheDirectory.appendingPathComponent(asset.localFilename)
             try? FileManager.default.removeItem(at: localURL)
             assetMetadata.removeValue(forKey: asset.localFilename)
-            Self.logger.info("Cache limit reached. Removed old asset: \(asset.localFilename)")
+            AmbienceLog.info(
+                "Evicted old HLS cache asset",
+                metadata: ["filename": asset.localFilename]
+            )
         }
     }
-} 
+}

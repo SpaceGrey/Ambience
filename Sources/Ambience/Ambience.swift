@@ -49,35 +49,6 @@ public enum AmbienceService {
         }
     }
     
-    /// Fetches the ambience asset configuration file URL for a given music item source URL
-    /// - Parameters:
-    ///   - musicItemSourceURL: The URL of the music item source
-    ///   - storefrontPolicy: The policy for choosing which storefront to use (default: .tryBoth)
-    /// - Returns: The URL of the ambience asset configuration file
-    /// - Throws: `AmbienceError` if any error occurs during the process
-    ///
-    /// - Note: The `storefrontPolicy` parameter is crucial in certain scenarios where the user's physical location
-    ///   doesn't match their Apple Music subscription region. For example:
-    ///
-    ///   A user located in mainland China might have an Apple Music subscription registered in the United States.
-    ///   In this case, when trying to access certain playlists (especially Apple Music's official curated playlists
-    ///   like Heavy Rotation Mix), the default behavior might fail to retrieve the Ambience content.
-    ///
-    ///   The `regionFirst` property controls the priority when using `.tryBoth` policy:
-    ///   - If `regionFirst` is `true`, it tries region-adjusted URL first, then falls back to account URL
-    ///   - If `regionFirst` is `false`, it tries account URL first, then falls back to region-adjusted URL
-    ///
-    ///   Example usage:
-    ///   ```
-    ///   // Try both account and region storefronts (default behavior)
-    ///   let ambienceURL = try await AmbienceService.fetchAmbienceAsset(from: musicItemURL)
-    ///
-    ///   // Only use account storefront
-    ///   let accountOnlyURL = try await AmbienceService.fetchAmbienceAsset(from: musicItemURL, storefrontPolicy: .followAccount)
-    ///
-    ///   // Only use region storefront
-    ///   let regionOnlyURL = try await AmbienceService.fetchAmbienceAsset(from: musicItemURL, storefrontPolicy: .followRegion)
-    ///   ```
     /// Resolves a music item URL to the raw HLS stream URL (m3u8), without downloading.
     ///
     /// Use this when you need the remote stream URL directly (e.g. for export via
@@ -86,34 +57,41 @@ public enum AmbienceService {
         from musicItemSourceURL: URL,
         storefrontPolicy: StorefrontChoosePolicy = .tryBoth
     ) async throws -> URL {
-        let adjustedURL = try await URLAdjuster.adjustURLForRegion(musicItemSourceURL)
+        AmbienceLog.info(
+            "resolveHLSURL started",
+            metadata: [
+                "source_url": musicItemSourceURL.absoluteString,
+                "storefront_policy": String(describing: storefrontPolicy),
+                "region_first": String(regionFirst),
+            ]
+        )
 
-        let fetchHLS: (URL) async throws -> URL = { pageURL in
-            let html = try await HTMLFetcher.fetchHTMLContent(from: pageURL)
-            return try AmbienceArtworkExtractor.extractAmbienceArtworkURL(from: html)
-        }
-
-        switch storefrontPolicy {
-        case .followAccount:
-            return try await fetchHLS(musicItemSourceURL)
-        case .followRegion:
-            return try await fetchHLS(adjustedURL)
-        case .tryBoth:
-            if regionFirst {
-                do { return try await fetchHLS(adjustedURL) }
-                catch AmbienceError.redirectedToHomepage {
-                    let res = try await fetchHLS(musicItemSourceURL)
-                    regionFirst = false
-                    return res
+        do {
+            let url = try await resolveURL(
+                from: musicItemSourceURL,
+                storefrontPolicy: storefrontPolicy,
+                resolve: { pageURL in
+                    let html = try await HTMLFetcher.fetchHTMLContent(from: pageURL)
+                    return try AmbienceArtworkExtractor.extractAmbienceArtworkURL(from: html)
                 }
-            } else {
-                do { return try await fetchHLS(musicItemSourceURL) }
-                catch AmbienceError.redirectedToHomepage {
-                    let res = try await fetchHLS(adjustedURL)
-                    regionFirst = true
-                    return res
-                }
-            }
+            )
+            AmbienceLog.info(
+                "resolveHLSURL succeeded",
+                metadata: [
+                    "source_url": musicItemSourceURL.absoluteString,
+                    "hls_url": url.absoluteString,
+                ]
+            )
+            return url
+        } catch {
+            AmbienceLog.error(
+                "resolveHLSURL failed",
+                metadata: [
+                    "source_url": musicItemSourceURL.absoluteString,
+                    "error": String(describing: error),
+                ]
+            )
+            throw error
         }
     }
 
@@ -122,30 +100,169 @@ public enum AmbienceService {
         from musicItemSourceURL: URL,
         storefrontPolicy: StorefrontChoosePolicy = .tryBoth
     ) async throws -> URL {
+        AmbienceLog.info(
+            "fetchAmbienceAsset started",
+            metadata: [
+                "source_url": musicItemSourceURL.absoluteString,
+                "storefront_policy": String(describing: storefrontPolicy),
+                "region_first": String(regionFirst),
+                "target_bitrate": String(format: "%.0f", targetBitrate),
+                "cache_limit": String(cacheLimit),
+            ]
+        )
+
+        do {
+            let url = try await resolveURL(
+                from: musicItemSourceURL,
+                storefrontPolicy: storefrontPolicy,
+                resolve: { pageURL in
+                    try await HLSAssetManager.shared.getAsset(from: pageURL)
+                }
+            )
+            AmbienceLog.info(
+                "fetchAmbienceAsset succeeded",
+                metadata: [
+                    "source_url": musicItemSourceURL.absoluteString,
+                    "asset_url": url.absoluteString,
+                    "is_local": String(url.isFileURL),
+                ]
+            )
+            return url
+        } catch {
+            AmbienceLog.error(
+                "fetchAmbienceAsset failed",
+                metadata: [
+                    "source_url": musicItemSourceURL.absoluteString,
+                    "error": String(describing: error),
+                ]
+            )
+            throw error
+        }
+    }
+
+    // MARK: - Private
+
+    private static func resolveURL(
+        from musicItemSourceURL: URL,
+        storefrontPolicy: StorefrontChoosePolicy,
+        resolve: @escaping (URL) async throws -> URL
+    ) async throws -> URL {
         let adjustedURL = try await URLAdjuster.adjustURLForRegion(musicItemSourceURL)
+        let resolveWithRecovery: (URL) async throws -> URL = { pageURL in
+            try await resolveWithStorefrontRedirectRecovery(from: pageURL, resolve: resolve)
+        }
+
         switch storefrontPolicy {
         case .followAccount:
-            return try await HLSAssetManager.shared.getAsset(from: musicItemSourceURL)
+            AmbienceLog.debug(
+                "Using account storefront only",
+                metadata: ["url": musicItemSourceURL.absoluteString]
+            )
+            return try await resolveWithRecovery(musicItemSourceURL)
         case .followRegion:
-            return try await HLSAssetManager.shared.getAsset(from: adjustedURL)
+            AmbienceLog.debug(
+                "Using region storefront only",
+                metadata: ["url": adjustedURL.absoluteString]
+            )
+            return try await resolveWithRecovery(adjustedURL)
         case .tryBoth:
             if regionFirst {
+                AmbienceLog.debug(
+                    "tryBoth: attempting region storefront first",
+                    metadata: [
+                        "primary_url": adjustedURL.absoluteString,
+                        "fallback_url": musicItemSourceURL.absoluteString,
+                    ]
+                )
                 do {
-                    return try await HLSAssetManager.shared.getAsset(from: adjustedURL)
-                } catch AmbienceError.redirectedToHomepage {
-                    let res = try await HLSAssetManager.shared.getAsset(from: musicItemSourceURL)
+                    return try await resolveWithRecovery(adjustedURL)
+                } catch AmbienceError.redirectedToHomepage(let detected) {
+                    // Recovery already tried; if URLs differ, attempt the other policy URL.
+                    guard adjustedURL != musicItemSourceURL else {
+                        throw AmbienceError.redirectedToHomepage(detectedStorefront: detected)
+                    }
+                    AmbienceLog.warning(
+                        "Region storefront redirected; falling back to account storefront",
+                        metadata: [
+                            "failed_url": adjustedURL.absoluteString,
+                            "fallback_url": musicItemSourceURL.absoluteString,
+                            "detected_storefront": detected ?? "unknown",
+                        ]
+                    )
+                    let res = try await resolveWithRecovery(musicItemSourceURL)
                     regionFirst = false
                     return res
                 }
             } else {
+                AmbienceLog.debug(
+                    "tryBoth: attempting account storefront first",
+                    metadata: [
+                        "primary_url": musicItemSourceURL.absoluteString,
+                        "fallback_url": adjustedURL.absoluteString,
+                    ]
+                )
                 do {
-                    return try await HLSAssetManager.shared.getAsset(from: musicItemSourceURL)
-                } catch AmbienceError.redirectedToHomepage {
-                    let res = try await HLSAssetManager.shared.getAsset(from: adjustedURL)
+                    return try await resolveWithRecovery(musicItemSourceURL)
+                } catch AmbienceError.redirectedToHomepage(let detected) {
+                    guard adjustedURL != musicItemSourceURL else {
+                        throw AmbienceError.redirectedToHomepage(detectedStorefront: detected)
+                    }
+                    AmbienceLog.warning(
+                        "Account storefront redirected; falling back to region storefront",
+                        metadata: [
+                            "failed_url": musicItemSourceURL.absoluteString,
+                            "fallback_url": adjustedURL.absoluteString,
+                            "detected_storefront": detected ?? "unknown",
+                        ]
+                    )
+                    let res = try await resolveWithRecovery(adjustedURL)
                     regionFirst = true
                     return res
                 }
             }
+        }
+    }
+
+    /// When Apple Music 302-redirects a catalog page to a regional homepage (geo mismatch),
+    /// rewrite the catalog URL to that storefront and retry once.
+    ///
+    /// This covers the common case where MusicKit/`Locale` report e.g. `us`, but the
+    /// network edge is in another region (e.g. China) and web pages only serve under `/cn/`.
+    private static func resolveWithStorefrontRedirectRecovery(
+        from pageURL: URL,
+        resolve: @escaping (URL) async throws -> URL
+    ) async throws -> URL {
+        do {
+            return try await resolve(pageURL)
+        } catch AmbienceError.redirectedToHomepage(let detectedStorefront) {
+            guard let detectedStorefront,
+                  let correctedURL = StorefrontURLRewriter.replacingStorefront(
+                    in: pageURL,
+                    with: detectedStorefront
+                  ),
+                  correctedURL != pageURL
+            else {
+                AmbienceLog.error(
+                    "Storefront redirect recovery unavailable",
+                    metadata: [
+                        "url": pageURL.absoluteString,
+                        "detected_storefront": detectedStorefront ?? "unknown",
+                    ]
+                )
+                throw AmbienceError.redirectedToHomepage(detectedStorefront: detectedStorefront)
+            }
+
+            AmbienceLog.warning(
+                "Retrying with redirect-detected storefront",
+                metadata: [
+                    "original_url": pageURL.absoluteString,
+                    "corrected_url": correctedURL.absoluteString,
+                    "detected_storefront": detectedStorefront,
+                    "original_storefront": StorefrontURLRewriter.storefront(in: pageURL) ?? "unknown",
+                ]
+            )
+
+            return try await resolve(correctedURL)
         }
     }
 }
@@ -167,10 +284,28 @@ private enum URLAdjuster {
         let amCode = try await MusicDataRequest.currentCountryCode
         
         guard let deviceRegionIdentifier = deviceRegionIdentifier, amCode != deviceRegionIdentifier else {
+            AmbienceLog.debug(
+                "URL region adjustment skipped",
+                metadata: [
+                    "url": url.absoluteString,
+                    "account_storefront": amCode,
+                    "device_region": deviceRegionIdentifier ?? "unknown",
+                ]
+            )
             return url
         }
         
-        return try replaceStorefront(in: url, from: amCode, to: deviceRegionIdentifier)
+        let adjusted = try replaceStorefront(in: url, from: amCode, to: deviceRegionIdentifier)
+        AmbienceLog.info(
+            "URL adjusted for device region",
+            metadata: [
+                "original_url": url.absoluteString,
+                "adjusted_url": adjusted.absoluteString,
+                "account_storefront": amCode,
+                "device_region": deviceRegionIdentifier,
+            ]
+        )
+        return adjusted
     }
     
     /// Replaces the storefront in the given URL
@@ -209,4 +344,3 @@ private enum URLAdjuster {
         return adjustedURL
     }
 }
-

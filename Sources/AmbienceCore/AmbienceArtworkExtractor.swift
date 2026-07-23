@@ -15,6 +15,13 @@ public enum AmbienceArtworkExtractor {
         guard let startRange = htmlContent.range(of: ampAmbientVideoTagStart),
               let endRange = htmlContent.range(of: ampAmbientVideoTagEnd)
         else {
+            AmbienceLog.info(
+                "No amp-ambient-video tag in Apple Music HTML",
+                metadata: [
+                    "html_bytes": String(htmlContent.utf8.count),
+                    "contains_ambient": String(htmlContent.contains("ambient")),
+                ]
+            )
             throw AmbienceError.noAmbienceArtworkFound
         }
 
@@ -27,9 +34,17 @@ public enum AmbienceArtworkExtractor {
               !source.isEmpty,
               let url = URL(string: source)
         else {
+            AmbienceLog.warning(
+                "amp-ambient-video tag present but src missing or invalid",
+                metadata: ["tag_bytes": String(html.utf8.count)]
+            )
             throw AmbienceError.noAmbienceArtworkFound
         }
 
+        AmbienceLog.info(
+            "Extracted ambience HLS URL",
+            metadata: ["hls_url": url.absoluteString]
+        )
         return url
     }
 }

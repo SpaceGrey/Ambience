@@ -89,10 +89,26 @@ public class AmbienceArtworkPlayerView: UIView {
     // MARK: - Public Methods
 
     public func updatePlayerItem(with url: URL, shouldAutoPlay: Bool = true) {
-        guard url != currentURL else { return }
-        self.currentURL = url
+        // Normalize directory package URLs (`.movpkg` is a bundle/directory).
+        let playbackURL = url.hasDirectoryPath ? url : url.standardizedFileURL
+        guard playbackURL != currentURL else {
+            if shouldAutoPlay, player.timeControlStatus != .playing {
+                play()
+            }
+            return
+        }
+        AmbienceLog.info(
+            "Player updating item",
+            metadata: [
+                "url": playbackURL.absoluteString,
+                "is_local": String(playbackURL.isFileURL),
+                "auto_play": String(shouldAutoPlay),
+                "bounds": "\(Int(bounds.width))x\(Int(bounds.height))",
+            ]
+        )
+        self.currentURL = playbackURL
         self.shouldAutoPlay = shouldAutoPlay
-        let playerItem = AVPlayerItem(url: url)
+        let playerItem = AVPlayerItem(url: playbackURL)
 
         removePlayerObservers()
         player.replaceCurrentItem(with: playerItem)
@@ -104,7 +120,17 @@ public class AmbienceArtworkPlayerView: UIView {
     }
 
     public func play() {
+        player.isMuted = true
         player.play()
+        AmbienceLog.debug(
+            "Player play() invoked",
+            metadata: [
+                "url": currentURL?.absoluteString ?? "unknown",
+                "rate": String(format: "%.2f", player.rate),
+                "time_control": String(describing: player.timeControlStatus.rawValue),
+                "bounds": "\(Int(bounds.width))x\(Int(bounds.height))",
+            ]
+        )
     }
 
     public func pause() {
@@ -122,17 +148,29 @@ public class AmbienceArtworkPlayerView: UIView {
     // MARK: - Private Methods
 
     private func setupPlayer() {
+        // Mute ambient video so it never fights Spotify / MusicKit playback
+        // for the audio session (a common cause of "ready but invisible" video).
+        backgroundColor = .clear
+        isOpaque = false
+        clipsToBounds = true
+        player.isMuted = true
+        player.automaticallyWaitsToMinimizeStalling = true
         playerLayer.player = player
+        playerLayer.backgroundColor = UIColor.clear.cgColor
+        playerLayer.videoGravity = .resizeAspectFill
         updateVideoGravity()
         setupAudioSession()
     }
 
     private func setupAudioSession() {
         do {
-            try AVAudioSession.sharedInstance().setCategory(.ambient, mode: .default)
+            try AVAudioSession.sharedInstance().setCategory(.ambient, mode: .default, options: [.mixWithOthers])
             try AVAudioSession.sharedInstance().setActive(true)
         } catch {
-            print("Failed to set audio session category: \(error)")
+            AmbienceLog.warning(
+                "Failed to set ambient audio session",
+                metadata: ["error": error.localizedDescription]
+            )
         }
     }
 
@@ -147,11 +185,43 @@ public class AmbienceArtworkPlayerView: UIView {
     }
 
     private func addPlayerObservers() {
-        itemObservation = player.currentItem?.observe(\.status, options: [.new]) { [weak self] item, _ in
+        itemObservation = player.currentItem?.observe(\.status, options: [.new, .initial]) { [weak self] item, _ in
             guard let self = self else { return }
-            if item.status == .readyToPlay {
+            switch item.status {
+            case .readyToPlay:
+                AmbienceLog.info(
+                    "Player item ready",
+                    metadata: [
+                        "url": self.currentURL?.absoluteString ?? "unknown",
+                        "duration_s": String(format: "%.2f", CMTimeGetSeconds(item.duration)),
+                        "bounds": "\(Int(self.bounds.width))x\(Int(self.bounds.height))",
+                        "auto_play": String(self.shouldAutoPlay),
+                    ]
+                )
+                // play() before ready is often a no-op; start (or restart) once the item can render.
+                if self.shouldAutoPlay {
+                    DispatchQueue.main.async {
+                        self.play()
+                    }
+                }
                 self.delegate?.ambiencePlayerIsReadyToPlay(self)
                 self.delegate?.ambiencePlayer(self, didUpdateDuration: CMTimeGetSeconds(item.duration))
+            case .failed:
+                AmbienceLog.error(
+                    "Player item failed",
+                    metadata: [
+                        "url": self.currentURL?.absoluteString ?? "unknown",
+                        "error": item.error?.localizedDescription ?? "unknown",
+                        "error_debug": String(describing: item.error),
+                    ]
+                )
+            case .unknown:
+                AmbienceLog.debug(
+                    "Player item status unknown",
+                    metadata: ["url": self.currentURL?.absoluteString ?? "unknown"]
+                )
+            @unknown default:
+                break
             }
         }
 
@@ -260,6 +330,14 @@ public class AmbienceArtworkPlayerView: NSView {
 
     public func updatePlayerItem(with url: URL, shouldAutoPlay: Bool = true) {
         guard url != currentURL else { return }
+        AmbienceLog.info(
+            "Player updating item",
+            metadata: [
+                "url": url.absoluteString,
+                "is_local": String(url.isFileURL),
+                "auto_play": String(shouldAutoPlay),
+            ]
+        )
         self.currentURL = url
         self.shouldAutoPlay = shouldAutoPlay
         let playerItem = AVPlayerItem(url: url)
@@ -293,6 +371,7 @@ public class AmbienceArtworkPlayerView: NSView {
 
     private func setupPlayer() {
         wantsLayer = true
+        player.isMuted = true
         playerLayer = AVPlayerLayer()
         playerLayer.player = player
         layer = playerLayer
@@ -312,9 +391,33 @@ public class AmbienceArtworkPlayerView: NSView {
     private func addPlayerObservers() {
         itemObservation = player.currentItem?.observe(\.status, options: [.new]) { [weak self] item, _ in
             guard let self = self else { return }
-            if item.status == .readyToPlay {
+            switch item.status {
+            case .readyToPlay:
+                AmbienceLog.info(
+                    "Player item ready",
+                    metadata: [
+                        "url": self.currentURL?.absoluteString ?? "unknown",
+                        "duration_s": String(format: "%.2f", CMTimeGetSeconds(item.duration)),
+                    ]
+                )
                 self.delegate?.ambiencePlayerIsReadyToPlay(self)
                 self.delegate?.ambiencePlayer(self, didUpdateDuration: CMTimeGetSeconds(item.duration))
+            case .failed:
+                AmbienceLog.error(
+                    "Player item failed",
+                    metadata: [
+                        "url": self.currentURL?.absoluteString ?? "unknown",
+                        "error": item.error?.localizedDescription ?? "unknown",
+                        "error_debug": String(describing: item.error),
+                    ]
+                )
+            case .unknown:
+                AmbienceLog.debug(
+                    "Player item status unknown",
+                    metadata: ["url": self.currentURL?.absoluteString ?? "unknown"]
+                )
+            @unknown default:
+                break
             }
         }
 
@@ -404,15 +507,21 @@ public struct AmbienceArtworkPlayer: UIViewRepresentable {
         view.isLoopingEnabled = isLoopingEnabled
         view.shouldAutoPlay = shouldAutoPlay
         view.artworkContentMode = artworkContentMode
+        // Expand to the size proposed by SwiftUI overlays / ZStacks.
+        view.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        view.setContentHuggingPriority(.defaultLow, for: .vertical)
+        view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        view.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
         return view
     }
 
     public func updateUIView(_ uiView: AmbienceArtworkPlayerView, context: Context) {
+        uiView.isLoopingEnabled = isLoopingEnabled
+        uiView.shouldAutoPlay = shouldAutoPlay
+        uiView.artworkContentMode = artworkContentMode
         if let url = url {
             uiView.updatePlayerItem(with: url, shouldAutoPlay: shouldAutoPlay)
         }
-        uiView.isLoopingEnabled = isLoopingEnabled
-        uiView.artworkContentMode = artworkContentMode
     }
 }
 

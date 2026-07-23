@@ -1,12 +1,15 @@
 import Foundation
 
 /// Errors that can occur during ambience artwork operations.
-public enum AmbienceError: Error {
+public enum AmbienceError: Error, Equatable {
     case invalidURL
     case invalidHTMLContent
     case noAmbienceArtworkFound
     case networkError
-    case redirectedToHomepage
+    /// Apple Music responded with a storefront homepage redirect (typically HTTP 302).
+    /// - Parameter detectedStorefront: Storefront code parsed from the redirect location
+    ///   (e.g. `"cn"` from `https://music.apple.com/cn`), when available.
+    case redirectedToHomepage(detectedStorefront: String? = nil)
 }
 
 extension AmbienceError: LocalizedError {
@@ -20,7 +23,10 @@ extension AmbienceError: LocalizedError {
             return "No animated artwork is available for this item."
         case .networkError:
             return "Network request failed while loading Apple Music data."
-        case .redirectedToHomepage:
+        case .redirectedToHomepage(let storefront):
+            if let storefront {
+                return "Storefront mismatch detected (redirected toward \(storefront))."
+            }
             return "Storefront mismatch detected and redirect to homepage occurred."
         }
     }
@@ -30,7 +36,7 @@ extension AmbienceError: LocalizedError {
         case .noAmbienceArtworkFound:
             return "Try another album or playlist that has animated artwork."
         case .redirectedToHomepage:
-            return "Try a link from your current storefront."
+            return "Try a link from your current storefront, or retry so Ambience can rewrite the storefront automatically."
         default:
             return nil
         }

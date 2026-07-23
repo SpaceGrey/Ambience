@@ -344,55 +344,16 @@ private func resolveToHLS(_ urlString: String) async throws -> URL {
     do {
         let html = try await HTMLFetcher.fetchHTMLContent(from: url)
         return try AmbienceArtworkExtractor.extractAmbienceArtworkURL(from: html)
-    } catch AmbienceError.redirectedToHomepage {
-        guard let corrected = try await detectAndCorrectStorefront(for: url) else {
-            throw AmbienceError.redirectedToHomepage
+    } catch AmbienceError.redirectedToHomepage(let detectedStorefront) {
+        guard let storefront = detectedStorefront,
+              let corrected = StorefrontURLRewriter.replacingStorefront(in: url, with: storefront),
+              corrected != url
+        else {
+            throw AmbienceError.redirectedToHomepage(detectedStorefront: detectedStorefront)
         }
         let html = try await HTMLFetcher.fetchHTMLContent(from: corrected)
         return try AmbienceArtworkExtractor.extractAmbienceArtworkURL(from: html)
     }
-}
-
-private func detectAndCorrectStorefront(for url: URL) async throws -> URL? {
-    final class StorefrontRedirectCapture: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
-        var redirectLocation: String?
-
-        func urlSession(_ session: URLSession, task: URLSessionTask,
-                        willPerformHTTPRedirection response: HTTPURLResponse,
-                        newRequest request: URLRequest,
-                        completionHandler: @escaping (URLRequest?) -> Void) {
-            if response.statusCode == 302, let location = response.value(forHTTPHeaderField: "Location") {
-                redirectLocation = location
-            }
-            completionHandler(nil)
-        }
-    }
-
-    let capture = StorefrontRedirectCapture()
-    let session = URLSession(configuration: .default, delegate: capture, delegateQueue: nil)
-    defer { session.finishTasksAndInvalidate() }
-
-    _ = try? await session.data(from: url)
-
-    guard let location = capture.redirectLocation else { return nil }
-
-    let storefront = location
-        .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        .components(separatedBy: "/")
-        .last ?? location.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-
-    guard !storefront.isEmpty, storefront.count <= 5 else { return nil }
-
-    var pathComponents = url.pathComponents
-    guard pathComponents.count >= 2 else { return nil }
-
-    pathComponents[1] = storefront
-
-    guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
-    components.path = pathComponents.joined(separator: "/")
-        .replacingOccurrences(of: "//", with: "/")
-
-    return components.url
 }
 
 private func formatBandwidth(_ bps: Double) -> String {
